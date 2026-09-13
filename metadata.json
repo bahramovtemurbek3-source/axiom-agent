@@ -1,0 +1,7 @@
+{
+  "name": "Axiom Agent",
+  "description": "JARVIS-inspired autonomous AI computer-control agent with voice neural interaction, holographic HUD interface, full-access CMD uplink, and machine orchestration.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
