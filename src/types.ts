@@ -250,7 +250,9 @@ export interface UserSettings {
     executionMode: 'real' | 'simulation';
     agentPort: number;
     agentHost: string;
+    autoConnectAgent?: boolean;
     requireConfirmationForDangerous: boolean;
+    requireConfirmationForHighRisk?: boolean;
   };
   notifications: {
     taskCompletion: boolean;

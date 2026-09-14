@@ -68,6 +68,7 @@ export const JarvisSettingsView: React.FC = () => {
       agentPort: 4141,
       agentHost: '127.0.0.1',
       autoConnectAgent: true,
+      requireConfirmationForDangerous: true,
       requireConfirmationForHighRisk: true,
     },
     notifications: {

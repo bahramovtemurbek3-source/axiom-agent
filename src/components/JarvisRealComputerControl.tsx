@@ -22,6 +22,7 @@ import {
 import { HostOS } from '../types';
 import { playJarvisSound, speakJarvis } from '../utils/jarvisVoice';
 import { localAgent, AgentStatus, LocalAgentDetails } from '../utils/localAgent';
+import { downloadJarvisMacLauncher } from '../utils/macLauncherScript';
 
 interface RealComputerControlProps {
   hostOS: HostOS;
@@ -61,6 +62,11 @@ export const JarvisRealComputerControl: React.FC<RealComputerControlProps> = ({
 
   const isConnected = agentStatus === 'connected';
   const isConnecting = agentStatus === 'connecting';
+
+  const handleDownloadLauncher = () => {
+    playJarvisSound('blip');
+    downloadJarvisMacLauncher();
+  };
 
   // Real tool action executor
   const handleExecuteRealTool = async (action: string, params: any, label: string) => {
@@ -209,20 +215,43 @@ export const JarvisRealComputerControl: React.FC<RealComputerControlProps> = ({
 
       {/* Disconnection Banner if offline */}
       {!isConnected && (
-        <div className="p-4 rounded-2xl bg-rose-950/40 border border-rose-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+        <div className="p-4 rounded-2xl bg-blue-950/40 border border-blue-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
           <div className="space-y-1">
-            <div className="font-bold text-rose-300 flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-rose-400" />
-              <span>Mahalliy Mac Agenti ulanmagan</span>
+            <div className="font-bold text-cyan-300 flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-400" />
+              <span>Mac Agenti Holati</span>
             </div>
             <p className="text-zinc-300 text-[11px]">
-              Jarvis ilovalarni ochish yoki tizim buyruqlarini bajarishi uchun kompyuteringizda agent ishlab turishi shart.
+              Agar terminalda <code className="text-emerald-300 font-mono">./JarvisAI.command</code> buyrug'ini ishga tushirgan bo'lsangiz, quyidagi tugmani bosing va ulanishni darhol faollashtiring.
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <code className="px-2.5 py-1.5 rounded-lg bg-black/60 border border-rose-900 font-mono text-emerald-400 text-[11px]">
-              ./JarvisAI.command
-            </code>
+          <div className="flex items-center gap-2 shrink-0 flex-wrap">
+            <button
+              type="button"
+              onClick={async () => {
+                playJarvisSound('acknowledge');
+                try {
+                  await fetch('/api/bridge/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: 'MacBook-M1', os: 'macOS', fullAccess: true }),
+                  });
+                } catch (_) {}
+                localAgent.setManualConnected(true, 'MacBook-M1');
+              }}
+              className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-lg shadow-emerald-600/30"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              <span>Terminalda ishga tushirdim (Ulash)</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleDownloadLauncher}
+              className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-mono text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Yuklab olish (.command)</span>
+            </button>
           </div>
         </div>
       )}

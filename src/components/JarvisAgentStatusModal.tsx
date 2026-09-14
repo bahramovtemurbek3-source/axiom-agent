@@ -13,9 +13,12 @@ import {
   Copy,
   Check,
   ShieldCheck,
+  Download,
+  ExternalLink,
 } from 'lucide-react';
 import { localAgent, AgentStatus, LocalAgentDetails } from '../utils/localAgent';
 import { playJarvisSound } from '../utils/jarvisVoice';
+import { downloadJarvisMacLauncher, getTerminalSelfContainedCommand } from '../utils/macLauncherScript';
 
 interface AgentStatusModalProps {
   isOpen: boolean;
@@ -63,11 +66,18 @@ export const JarvisAgentStatusModal: React.FC<AgentStatusModalProps> = ({ isOpen
     }
   };
 
+  const handleDownloadCommand = () => {
+    playJarvisSound('blip');
+    downloadJarvisMacLauncher();
+  };
+
   const handleCopy = (cmd: string) => {
     navigator.clipboard.writeText(cmd);
     setCopiedCmd(true);
     setTimeout(() => setCopiedCmd(false), 2000);
   };
+
+  const terminalOfflineCmd = getTerminalSelfContainedCommand();
 
   const isConnected = status === 'connected';
   const isConnecting = status === 'connecting';
@@ -143,14 +153,36 @@ export const JarvisAgentStatusModal: React.FC<AgentStatusModalProps> = ({ isOpen
             </div>
           </div>
 
-          <button
-            onClick={handlePingNow}
-            disabled={isChecking}
-            className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-xs font-medium text-white flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isChecking ? 'animate-spin' : ''}`} />
-            <span>Tekshirish</span>
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {!isConnected && (
+              <button
+                onClick={async () => {
+                  playJarvisSound('acknowledge');
+                  try {
+                    await fetch('/api/bridge/register', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ name: 'MacBook-M1', os: 'macOS', fullAccess: true }),
+                    });
+                  } catch (_) {}
+                  localAgent.setManualConnected(true, 'MacBook-M1');
+                }}
+                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold text-white flex items-center gap-1.5 transition-colors cursor-pointer shadow-md shadow-emerald-500/20"
+                title="Terminalda agentni ishga tushirgan bo'lsangiz, ulanishni darhol tasdiqlang"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>Ulanishni tasdiqlash</span>
+              </button>
+            )}
+            <button
+              onClick={handlePingNow}
+              disabled={isChecking}
+              className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-xs font-medium text-white flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isChecking ? 'animate-spin' : ''}`} />
+              <span>Tekshirish</span>
+            </button>
+          </div>
         </div>
 
         {/* Telemetry Metrics Grid */}
@@ -196,29 +228,51 @@ export const JarvisAgentStatusModal: React.FC<AgentStatusModalProps> = ({ isOpen
           </div>
         </div>
 
-        {/* If Disconnected: Show Quick Start Command */}
+        {/* If Disconnected: Show Download and Quick Start */}
         {!isConnected && (
-          <div className="p-4 rounded-xl bg-[#0b1326] border border-blue-900/60 space-y-2.5">
-            <div className="flex items-center justify-between text-xs font-semibold text-cyan-300">
-              <span className="flex items-center gap-1.5">
-                <Terminal className="w-4 h-4 text-cyan-400" />
-                <span>Agentni Mac terminalida ishga tushiring:</span>
+          <div className="p-4 rounded-xl bg-[#0b1326] border border-blue-900/60 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-cyan-300 flex items-center gap-1.5">
+                <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                <span>Mac Launcher (Full Access):</span>
               </span>
-              <button
-                onClick={() => handleCopy('./JarvisAI.command')}
-                className="text-[11px] text-zinc-400 hover:text-white flex items-center gap-1 cursor-pointer"
-              >
-                {copiedCmd ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                <span>Nusxalash</span>
-              </button>
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950/80 border border-emerald-500/40 text-emerald-300">
+                macOS Native
+              </span>
             </div>
-            <pre className="p-2.5 rounded-lg bg-[#040813] border border-blue-950 font-mono text-xs text-emerald-400 overflow-x-auto">
-              ./JarvisAI.command
-            </pre>
-            <p className="text-[11px] text-zinc-400">
-              Yoki bevosita Node.js orqali: <code className="text-zinc-200">node local-agent/agent.js</code>. Agent
-              ishga tushishi bilan ushbu indikator avtomatik ravishda yashil rangga o'tadi.
-            </p>
+
+            {/* Direct Download Button */}
+            <button
+              type="button"
+              onClick={handleDownloadCommand}
+              className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white font-semibold text-xs flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20 transition-all cursor-pointer text-center"
+            >
+              <Download className="w-4 h-4" />
+              <span>JarvisAI.command faylini yuklab olish</span>
+            </button>
+
+            <div className="p-2.5 rounded-lg bg-[#040813] border border-blue-950/80 text-[11px] text-zinc-300 space-y-1">
+              <div className="font-semibold text-cyan-200">Yuklab olgandan so'ng:</div>
+              <p className="text-zinc-400 leading-relaxed">
+                1. Yuklab olingan <code className="text-emerald-300">JarvisAI.command</code> ustiga ikki marta bosing.<br />
+                2. Ochilgan oynada ruxsatlar (Accessibility, Microphone, Screen) beriladi.<br />
+                3. J.A.R.V.I.S. kompyuteringiz bilan avtomatik bog'lanadi.
+              </p>
+            </div>
+
+            <div className="space-y-2 pt-1 border-t border-blue-950">
+              <div className="flex items-center justify-between text-[11px] text-zinc-400">
+                <span>Terminalda 1 qatorda yaratish & ishga tushirish:</span>
+                <button
+                  type="button"
+                  onClick={() => handleCopy(terminalOfflineCmd)}
+                  className="text-[11px] text-cyan-400 hover:text-white flex items-center gap-1 cursor-pointer font-medium"
+                >
+                  {copiedCmd ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                  <span>Buyruqni nusxalash</span>
+                </button>
+              </div>
+            </div>
           </div>
         )}
 

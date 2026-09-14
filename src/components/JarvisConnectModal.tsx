@@ -20,9 +20,11 @@ import {
   Play,
   ArrowRight,
   AlertTriangle,
+  Download,
 } from 'lucide-react';
 import { ConnectedDevice, HostOS } from '../types';
 import { playJarvisSound } from '../utils/jarvisVoice';
+import { downloadJarvisMacLauncher, getTerminalSelfContainedCommand } from '../utils/macLauncherScript';
 
 interface JarvisConnectModalProps {
   isOpen: boolean;
@@ -70,6 +72,9 @@ export const JarvisConnectModal: React.FC<JarvisConnectModalProps> = ({
     if (selectedOS === 'windows') {
       return `powershell -c "irm ${base}/connect.ps1 | iex"`;
     }
+    if (selectedOS === 'macos') {
+      return getTerminalSelfContainedCommand();
+    }
     return `curl -sL ${base}/connect.sh | bash`;
   };
 
@@ -80,6 +85,11 @@ export const JarvisConnectModal: React.FC<JarvisConnectModalProps> = ({
     playJarvisSound('blip');
     setCopied(true);
     setTimeout(() => setCopied(false), 2500);
+  };
+
+  const handleDownloadMacLauncher = () => {
+    playJarvisSound('blip');
+    downloadJarvisMacLauncher();
   };
 
   const handleSimulate = () => {
@@ -289,6 +299,29 @@ export const JarvisConnectModal: React.FC<JarvisConnectModalProps> = ({
                   </button>
                 </div>
               </div>
+
+              {/* Mac Direct Launcher Download */}
+              {selectedOS === 'macos' && (
+                <div className="mt-3 p-3.5 rounded-2xl bg-gradient-to-r from-blue-950/60 to-cyan-950/60 border border-blue-800/60 flex flex-col sm:flex-row items-center justify-between gap-3">
+                  <div className="text-xs">
+                    <div className="font-mono font-bold text-cyan-300 flex items-center gap-1.5">
+                      <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                      <span>macOS Launcher Fayli (Full Access)</span>
+                    </div>
+                    <p className="text-[11px] text-zinc-400 mt-0.5">
+                      Buyruq yozmasdan, to'g'ridan-to'g'ri .command faylini yuklab olib ishga tushiring
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleDownloadMacLauncher}
+                    className="w-full sm:w-auto px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-mono font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer shrink-0 shadow-md"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Yuklab olish (.command)</span>
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* How it works breakdown */}

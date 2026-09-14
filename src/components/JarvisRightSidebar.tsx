@@ -19,7 +19,7 @@ export interface RecentTaskItem {
   id: string;
   title: string;
   iconType: 'youtube' | 'files' | 'system' | 'search' | 'text';
-  status: 'Completed' | 'In Progress' | 'Pending';
+  status: 'Completed' | 'In Progress' | 'Pending' | 'Failed';
   time: string;
 }
 
