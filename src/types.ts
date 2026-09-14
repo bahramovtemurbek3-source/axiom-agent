@@ -147,3 +147,140 @@ export interface JarvisTelemetry {
   activeProtocols: string[];
 }
 
+export interface UserProfile {
+  id: string;
+  username: string;
+  name: string;
+  displayName: string;
+  email: string;
+  avatar: string;
+  handle?: string;
+  bio?: string;
+  role?: string;
+  plan?: string;
+  memberSince?: string;
+  storageUsedGB?: number;
+  storageTotalGB?: number;
+  language?: string;
+  timezone?: string;
+  theme?: string;
+  voice?: string;
+  voiceSpeed?: number;
+  voicePitch?: number;
+  autoSpeak?: boolean;
+  createdAt?: string;
+  lastActive?: string;
+}
+
+export interface SkillItem {
+  id: string;
+  name: string;
+  category: 'browser' | 'files' | 'terminal' | 'system' | 'app' | 'screenshot' | 'clipboard' | 'coding' | 'git' | 'minecraft';
+  icon: string;
+  description: string;
+  permissionLevel: 'LOW' | 'MEDIUM' | 'HIGH';
+  enabled: boolean;
+  requiresConfirmation: boolean;
+  executionCount: number;
+  lastUsed?: string;
+}
+
+export interface ScheduledTaskItem {
+  id: string;
+  title: string;
+  command: string;
+  schedule: string;
+  frequency: 'once' | 'daily' | 'weekly' | 'hourly';
+  nextRun: string;
+  lastRun?: string;
+  enabled: boolean;
+  category: string;
+  createdAt: string;
+}
+
+export interface MemoryItem {
+  id: string;
+  category: 'preference' | 'fact' | 'instruction' | 'system';
+  key: string;
+  value: string;
+  createdAt: string;
+}
+
+export interface NotificationItem {
+  id: string;
+  title: string;
+  message: string;
+  type: 'info' | 'success' | 'warning' | 'error';
+  read: boolean;
+  createdAt: string;
+}
+
+export interface UserSettings {
+  general: {
+    language: string;
+    theme: string;
+    timezone: string;
+    startupBehavior: string;
+    interfacePreferences: string;
+  };
+  ai: {
+    model: string;
+    responseStyle: 'balanced' | 'concise' | 'detailed' | 'analytical';
+    temperature: number;
+    contextLength: number;
+    memoryBehavior: 'always' | 'session' | 'disabled';
+    taskExecutionConfirmation: boolean;
+  };
+  voice: {
+    voiceEnabled: boolean; // Voice Assistant ON/OFF
+    voiceInputEnabled: boolean; // Voice Input ON/OFF
+    voiceOutputEnabled: boolean; // Voice Output ON/OFF
+    autoSpeak: boolean; // Auto Speak ON/OFF
+    gender: 'male' | 'female';
+    language: string;
+    selectedVoice: string;
+    speechSpeed: number;
+    pitch: number;
+    volume: number;
+    microphone: string;
+    speaker: string;
+    pushToTalk: boolean;
+  };
+  developer: {
+    executionMode: 'real' | 'simulation';
+    agentPort: number;
+    agentHost: string;
+    requireConfirmationForDangerous: boolean;
+  };
+  notifications: {
+    taskCompletion: boolean;
+    taskFailure: boolean;
+    reminders: boolean;
+    systemNotifications: boolean;
+    soundEffects: boolean;
+    desktopNotifications: boolean;
+  };
+  privacy: {
+    saveConversationHistory: boolean;
+    allowLongTermMemory: boolean;
+    telemetryEnabled: boolean;
+  };
+}
+
+export type AgentConnectionState = 'connected' | 'connecting' | 'disconnected';
+
+export interface LocalAgentInfo {
+  status: AgentConnectionState;
+  agentVersion: string;
+  platform: string;
+  os: string;
+  hostname: string;
+  uptime?: number;
+  lastHeartbeat?: number;
+  latency?: number;
+  port: number;
+  error?: string;
+  token?: string;
+}
+
+

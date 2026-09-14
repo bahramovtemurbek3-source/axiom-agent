@@ -125,20 +125,52 @@ export function playJarvisSound(type: 'wake' | 'blip' | 'acknowledge' | 'alert' 
 }
 
 // Text-to-Speech synthesis for Jarvis Voice
-export function speakJarvis(
-  text: string,
-  options?: {
-    rate?: number;
-    pitch?: number;
-    onStart?: () => void;
-    onEnd?: () => void;
-  }
-) {
+export interface JarvisSpeakOptions {
+  enabled?: boolean;
+  rate?: number;
+  pitch?: number;
+  volume?: number;
+  voiceName?: string;
+  gender?: 'male' | 'female';
+  language?: string; // 'uz' | 'ru' | 'en'
+  onStart?: () => void;
+  onEnd?: () => void;
+}
+
+// Get all system voices
+export function getAvailableVoices(): SpeechSynthesisVoice[] {
+  if (typeof window === 'undefined' || !window.speechSynthesis) return [];
+  return window.speechSynthesis.getVoices();
+}
+
+export function speakJarvis(text: string, options?: JarvisSpeakOptions) {
   if (typeof window === 'undefined' || !window.speechSynthesis) return;
+
+  // STRICT VOICE OFF ENFORCEMENT:
+  // Check if voice output is explicitly disabled via options OR persisted in localStorage
+  if (options?.enabled === false) {
+    window.speechSynthesis.cancel();
+    return;
+  }
+
+  try {
+    const savedSettings = localStorage.getItem('jarvis_settings');
+    if (savedSettings) {
+      const parsed = JSON.parse(savedSettings);
+      if (parsed?.voice) {
+        if (parsed.voice.voiceEnabled === false || parsed.voice.voiceOutputEnabled === false) {
+          window.speechSynthesis.cancel();
+          return;
+        }
+      }
+    }
+  } catch (e) {
+    // Ignore JSON parse errors
+  }
 
   window.speechSynthesis.cancel();
 
-  // Strip JSON formatting or code chunks if text contains raw action blocks
+  // Strip JSON formatting, command outputs, codeblocks, or actions
   const cleanText = text
     .replace(/\{"think":.*?,"action":.*?\}/gs, 'Executing requested system sequence.')
     .replace(/\{.*?\}/gs, '')
@@ -149,35 +181,60 @@ export function speakJarvis(
   if (!cleanText) return;
 
   const utterance = new SpeechSynthesisUtterance(cleanText);
-  utterance.rate = options?.rate ?? 1.05;
-  utterance.pitch = options?.pitch ?? 0.95;
+  utterance.rate = Math.max(0.5, Math.min(2.0, options?.rate ?? 1.05));
+  utterance.pitch = Math.max(0.5, Math.min(2.0, options?.pitch ?? 0.95));
+  utterance.volume = Math.max(0, Math.min(1.0, options?.volume ?? 1.0));
 
-  // Language detection
-  const isUzbek = /[ўқғҳ]|tekshir|fayl|tizim|salom|jarvis/i.test(cleanText);
-  const isRussian = /[а-яё]/i.test(cleanText);
+  // Determine language
+  let lang = options?.language;
+  if (!lang || lang === 'auto') {
+    const isUzbek = /[ўқғҳ]|tekshir|fayl|tizim|salom|jarvis|ishla|qil/i.test(cleanText);
+    const isRussian = /[а-яё]/i.test(cleanText);
+    lang = isUzbek ? 'uz' : isRussian ? 'ru' : 'en';
+  }
 
-  if (isUzbek) {
+  if (lang === 'uz') {
     utterance.lang = 'uz-UZ';
-  } else if (isRussian) {
+  } else if (lang === 'ru') {
     utterance.lang = 'ru-RU';
   } else {
     utterance.lang = 'en-GB'; // British English for authentic Jarvis accent
   }
 
-  // Find preferred voice
+  // Voice Selection
   const voices = window.speechSynthesis.getVoices();
   if (voices.length > 0) {
-    let chosenVoice = null;
-    if (isRussian) {
-      chosenVoice = voices.find((v) => v.lang.startsWith('ru'));
-    } else if (isUzbek) {
-      chosenVoice = voices.find((v) => v.lang.startsWith('uz') || v.lang.startsWith('tr'));
-    } else {
-      chosenVoice =
-        voices.find((v) => v.lang === 'en-GB' && v.name.toLowerCase().includes('male')) ||
-        voices.find((v) => v.lang === 'en-GB') ||
-        voices.find((v) => v.lang.startsWith('en'));
+    let chosenVoice: SpeechSynthesisVoice | null = null;
+
+    // 1. If explicit voiceName provided and exists
+    if (options?.voiceName) {
+      chosenVoice = voices.find((v) => v.name === options.voiceName) || null;
     }
+
+    // 2. Otherwise match by language and gender
+    if (!chosenVoice) {
+      const isMale = options?.gender !== 'female';
+
+      if (lang === 'ru') {
+        chosenVoice =
+          voices.find((v) => v.lang.startsWith('ru') && (isMale ? v.name.toLowerCase().includes('male') || v.name.toLowerCase().includes('dmitri') || v.name.toLowerCase().includes('pavel') : v.name.toLowerCase().includes('female') || v.name.toLowerCase().includes('milena') || v.name.toLowerCase().includes('tatyana'))) ||
+          voices.find((v) => v.lang.startsWith('ru')) ||
+          null;
+      } else if (lang === 'uz') {
+        chosenVoice =
+          voices.find((v) => v.lang.startsWith('uz') || v.lang.startsWith('tr')) ||
+          null;
+      } else {
+        // English
+        chosenVoice =
+          voices.find((v) => v.lang === 'en-GB' && (isMale ? v.name.toLowerCase().includes('male') || v.name.toLowerCase().includes('daniel') || v.name.toLowerCase().includes('george') : v.name.toLowerCase().includes('female') || v.name.toLowerCase().includes('serena') || v.name.toLowerCase().includes('kate'))) ||
+          voices.find((v) => v.lang === 'en-GB') ||
+          voices.find((v) => v.lang.startsWith('en') && (isMale ? v.name.toLowerCase().includes('male') : v.name.toLowerCase().includes('female'))) ||
+          voices.find((v) => v.lang.startsWith('en')) ||
+          null;
+      }
+    }
+
     if (chosenVoice) {
       utterance.voice = chosenVoice;
     }
@@ -197,6 +254,18 @@ export function speakJarvis(
   };
 
   window.speechSynthesis.speak(utterance);
+}
+
+// Test voice with sample sentence
+export function testJarvisVoice(options?: JarvisSpeakOptions) {
+  const lang = options?.language || 'uz';
+  let sampleText = "Assalomu alaykum, janob. Jarvis ovoz tizimi faol va buyruqlaringizga tayyor.";
+  if (lang === 'en') {
+    sampleText = "Good day, sir. Jarvis audio diagnostics complete and operating at maximum fidelity.";
+  } else if (lang === 'ru') {
+    sampleText = "Здравствуйте, сэр. Голосовой модуль Джарвис функционирует штатно.";
+  }
+  speakJarvis(sampleText, options);
 }
 
 // Stop current speech

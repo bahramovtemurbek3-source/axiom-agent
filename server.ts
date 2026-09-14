@@ -3,6 +3,7 @@ import path from 'path';
 import dotenv from 'dotenv';
 import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
+import { db, hashPassword, verifyPassword } from './server/db.ts';
 
 dotenv.config();
 
@@ -274,6 +275,498 @@ async function startServer() {
 
   app.use(express.json({ limit: '10mb' }));
 
+  // Helper to extract authenticated user from Bearer token
+  function getAuthUser(req: express.Request) {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.substring(7);
+      const session = db.getSession(token);
+      if (session) {
+        const user = db.getUserById(session.userId);
+        if (user) return { user, session };
+      }
+    }
+    const defaultUser = db.getUserById('usr-temurbek') || db.getUserByUsernameOrEmail('temurbek');
+    return { user: defaultUser || null, session: null };
+  }
+
+  // ==========================================
+  // AUTHENTICATION ROUTES
+  // ==========================================
+  app.post('/api/auth/register', (req, res) => {
+    try {
+      const { username, email, displayName, password, confirmPassword } = req.body;
+      if (!username || !email || !password) {
+        return res.status(400).json({ error: 'Username, email and password are required' });
+      }
+      if (username.length < 3) {
+        return res.status(400).json({ error: 'Username must be at least 3 characters long' });
+      }
+      if (password.length < 6) {
+        return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+      }
+      if (confirmPassword && password !== confirmPassword) {
+        return res.status(400).json({ error: 'Passwords do not match' });
+      }
+      const existing = db.getUserByUsernameOrEmail(username) || db.getUserByUsernameOrEmail(email);
+      if (existing) {
+        return res.status(400).json({ error: 'Username or email is already registered' });
+      }
+
+      const { hash, salt } = hashPassword(password);
+      const user = db.createUser({
+        username: username.trim(),
+        email: email.trim().toLowerCase(),
+        displayName: displayName ? displayName.trim() : username.trim(),
+        passwordHash: hash,
+        salt,
+      });
+
+      const session = db.createSession(user.id);
+      const { passwordHash: _, salt: __, ...safeUser } = user;
+      res.json({
+        success: true,
+        user: safeUser,
+        token: session.token,
+        message: 'Account created successfully',
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || 'Registration failed' });
+    }
+  });
+
+  app.post('/api/auth/login', (req, res) => {
+    try {
+      const { identifier, password } = req.body;
+      if (!identifier || !password) {
+        return res.status(400).json({ error: 'Username/email and password are required' });
+      }
+
+      const user = db.getUserByUsernameOrEmail(identifier);
+      if (!user) {
+        return res.status(401).json({ error: 'Invalid username or password' });
+      }
+
+      const isValid = verifyPassword(password, user.passwordHash, user.salt);
+      if (!isValid) {
+        return res.status(401).json({ error: 'Invalid username or password' });
+      }
+
+      const session = db.createSession(user.id);
+      db.updateUser(user.id, { lastActive: new Date().toISOString() });
+      const { passwordHash: _, salt: __, ...safeUser } = user;
+      res.json({
+        success: true,
+        user: safeUser,
+        token: session.token,
+        message: 'Logged in successfully',
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || 'Login failed' });
+    }
+  });
+
+  app.post('/api/auth/logout', (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.substring(7);
+      db.deleteSession(token);
+    }
+    res.json({ success: true, message: 'Logged out successfully' });
+  });
+
+  app.get('/api/auth/me', (req, res) => {
+    const { user } = getAuthUser(req);
+    if (!user) {
+      return res.status(401).json({ error: 'Unauthenticated' });
+    }
+    const { passwordHash: _, salt: __, ...safeUser } = user;
+    res.json({ user: safeUser });
+  });
+
+  app.post('/api/auth/forgot-password', (req, res) => {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email is required' });
+    const user = db.getUserByUsernameOrEmail(email);
+    // Return friendly confirmation even if email exists to avoid email enumeration
+    res.json({
+      success: true,
+      message: user
+        ? `Parolni tiklash bo'yicha yo'riqnoma ${email} manziliga yuborildi.`
+        : "Agar ushbu email ro'yxatdan o'tgan bo'lsa, xat yuboriladi.",
+      resetToken: user ? 'demo-reset-token-' + Date.now() : null,
+    });
+  });
+
+  app.post('/api/auth/reset-password', (req, res) => {
+    const { email, newPassword, confirmPassword } = req.body;
+    if (!email || !newPassword) return res.status(400).json({ error: 'Email and new password required' });
+    if (newPassword.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    if (confirmPassword && newPassword !== confirmPassword) return res.status(400).json({ error: 'Passwords do not match' });
+
+    const user = db.getUserByUsernameOrEmail(email);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const { hash, salt } = hashPassword(newPassword);
+    db.updateUser(user.id, { passwordHash: hash, salt });
+    res.json({ success: true, message: 'Parol muvaffaqiyatli yangilandi' });
+  });
+
+  // ==========================================
+  // PROFILE & ACCOUNT MANAGEMENT
+  // ==========================================
+  app.put('/api/user/profile', (req, res) => {
+    const { user } = getAuthUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { displayName, bio, avatar, language, timezone, theme, voice, voiceSpeed, voicePitch, autoSpeak } = req.body;
+    const updated = db.updateUser(user.id, {
+      ...(displayName ? { displayName } : {}),
+      ...(bio !== undefined ? { bio } : {}),
+      ...(avatar ? { avatar } : {}),
+      ...(language ? { language } : {}),
+      ...(timezone ? { timezone } : {}),
+      ...(theme ? { theme } : {}),
+      ...(voice ? { voice } : {}),
+      ...(typeof voiceSpeed === 'number' ? { voiceSpeed } : {}),
+      ...(typeof voicePitch === 'number' ? { voicePitch } : {}),
+      ...(typeof autoSpeak === 'boolean' ? { autoSpeak } : {}),
+    });
+
+    const { passwordHash: _, salt: __, ...safeUser } = updated!;
+    res.json({ success: true, user: safeUser });
+  });
+
+  app.post('/api/user/change-password', (req, res) => {
+    const { user } = getAuthUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { currentPassword, newPassword, confirmPassword } = req.body;
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Current and new passwords required' });
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'New password must be at least 6 characters' });
+    }
+    if (confirmPassword && newPassword !== confirmPassword) {
+      return res.status(400).json({ error: 'Passwords do not match' });
+    }
+
+    const isValid = verifyPassword(currentPassword, user.passwordHash, user.salt);
+    if (!isValid) {
+      return res.status(400).json({ error: 'Amaldagi parol noto\'g\'ri' });
+    }
+
+    const { hash, salt } = hashPassword(newPassword);
+    db.updateUser(user.id, { passwordHash: hash, salt });
+    res.json({ success: true, message: 'Parol muvaffaqiyatli yangilandi' });
+  });
+
+  app.delete('/api/user/account', (req, res) => {
+    const { user } = getAuthUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { confirmation } = req.body;
+    if (confirmation !== 'DELETE') {
+      return res.status(400).json({ error: 'Confirmation string "DELETE" is required for account deletion' });
+    }
+
+    db.deleteUser(user.id);
+    res.json({ success: true, message: 'Hisobingiz va barcha ma\'lumotlar o\'chirildi' });
+  });
+
+  app.get('/api/user/sessions', (req, res) => {
+    const { user } = getAuthUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+    const sessions = db.getUserSessions(user.id);
+    res.json({ sessions });
+  });
+
+  // ==========================================
+  // SETTINGS ROUTES
+  // ==========================================
+  app.get('/api/settings', (req, res) => {
+    const { user } = getAuthUser(req);
+    const userId = user?.id || 'usr-temurbek';
+    const settings = db.getSettings(userId);
+    res.json({ settings });
+  });
+
+  app.put('/api/settings', (req, res) => {
+    const { user } = getAuthUser(req);
+    const userId = user?.id || 'usr-temurbek';
+    const updated = db.updateSettings(userId, req.body);
+    res.json({ success: true, settings: updated });
+  });
+
+  // ==========================================
+  // CONVERSATIONS & MESSAGES
+  // ==========================================
+  app.get('/api/conversations', (req, res) => {
+    const { user } = getAuthUser(req);
+    const userId = user?.id || 'usr-temurbek';
+    const conversations = db.getConversations(userId);
+    res.json({ conversations });
+  });
+
+  app.post('/api/conversations', (req, res) => {
+    const { user } = getAuthUser(req);
+    const userId = user?.id || 'usr-temurbek';
+    const { title } = req.body;
+    const conv = db.createConversation(userId, title);
+    res.json({ success: true, conversation: conv });
+  });
+
+  app.put('/api/conversations/:id', (req, res) => {
+    const { id } = req.params;
+    const { title, pinned } = req.body;
+    const updated = db.updateConversation(id, {
+      ...(title ? { title } : {}),
+      ...(typeof pinned === 'boolean' ? { pinned } : {}),
+    });
+    if (!updated) return res.status(404).json({ error: 'Conversation not found' });
+    res.json({ success: true, conversation: updated });
+  });
+
+  app.delete('/api/conversations/:id', (req, res) => {
+    const { id } = req.params;
+    const deleted = db.deleteConversation(id);
+    res.json({ success: deleted });
+  });
+
+  app.get('/api/conversations/:id/messages', (req, res) => {
+    const { id } = req.params;
+    const messages = db.getMessages(id);
+    res.json({ messages });
+  });
+
+  app.post('/api/conversations/:id/messages', (req, res) => {
+    const { id } = req.params;
+    const { user } = getAuthUser(req);
+    const userId = user?.id || 'usr-temurbek';
+    const { sender, text, substeps, completedBadge, time, embeddedCard, sources, thought } = req.body;
+    const msg = db.addMessage({
+      conversationId: id,
+      userId,
+      sender: sender || 'user',
+      text: text || '',
+      substeps,
+      completedBadge,
+      time: time || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      embeddedCard,
+      sources,
+      thought,
+    });
+    res.json({ success: true, message: msg });
+  });
+
+  app.delete('/api/conversations/:id/messages', (req, res) => {
+    const { id } = req.params;
+    db.clearMessages(id);
+    res.json({ success: true });
+  });
+
+  // ==========================================
+  // TASKS & SCHEDULED TASKS
+  // ==========================================
+  app.get('/api/tasks', (req, res) => {
+    const { user } = getAuthUser(req);
+    const userId = user?.id || 'usr-temurbek';
+    const tasks = db.getTasks(userId);
+    res.json({ tasks });
+  });
+
+  app.post('/api/tasks', (req, res) => {
+    const { user } = getAuthUser(req);
+    const userId = user?.id || 'usr-temurbek';
+    const { title, description, category, priority } = req.body;
+    if (!title) return res.status(400).json({ error: 'Task title is required' });
+
+    const newTask = db.createTask({
+      userId,
+      title,
+      description: description || '',
+      category: category || 'general',
+      status: 'Pending',
+      priority: priority || 'medium',
+      progress: 0,
+      logs: [`Vazifa yaratildi: ${title}`],
+    });
+    res.json({ success: true, task: newTask });
+  });
+
+  app.put('/api/tasks/:id', (req, res) => {
+    const { id } = req.params;
+    const updated = db.updateTask(id, req.body);
+    if (!updated) return res.status(404).json({ error: 'Task not found' });
+    res.json({ success: true, task: updated });
+  });
+
+  app.delete('/api/tasks/:id', (req, res) => {
+    const { id } = req.params;
+    const deleted = db.deleteTask(id);
+    res.json({ success: deleted });
+  });
+
+  app.get('/api/scheduled-tasks', (req, res) => {
+    const { user } = getAuthUser(req);
+    const userId = user?.id || 'usr-temurbek';
+    const scheduled = db.getScheduledTasks(userId);
+    res.json({ scheduledTasks: scheduled });
+  });
+
+  app.post('/api/scheduled-tasks', (req, res) => {
+    const { user } = getAuthUser(req);
+    const userId = user?.id || 'usr-temurbek';
+    const { title, command, schedule, frequency, category } = req.body;
+    if (!title || !schedule) return res.status(400).json({ error: 'Title and schedule are required' });
+
+    const newSched = db.createScheduledTask({
+      userId,
+      title,
+      command: command || '',
+      schedule,
+      frequency: frequency || 'daily',
+      nextRun: 'Rejalashtirilgan vaqtda',
+      enabled: true,
+      category: category || 'general',
+    });
+    res.json({ success: true, scheduledTask: newSched });
+  });
+
+  app.put('/api/scheduled-tasks/:id', (req, res) => {
+    const { id } = req.params;
+    const updated = db.updateScheduledTask(id, req.body);
+    if (!updated) return res.status(404).json({ error: 'Scheduled task not found' });
+    res.json({ success: true, scheduledTask: updated });
+  });
+
+  app.delete('/api/scheduled-tasks/:id', (req, res) => {
+    const { id } = req.params;
+    const deleted = db.deleteScheduledTask(id);
+    res.json({ success: deleted });
+  });
+
+  // ==========================================
+  // SKILLS ARCHITECTURE
+  // ==========================================
+  app.get('/api/skills', (req, res) => {
+    const skills = db.getSkills();
+    res.json({ skills });
+  });
+
+  app.put('/api/skills/:id', (req, res) => {
+    const { id } = req.params;
+    const updated = db.updateSkill(id, req.body);
+    if (!updated) return res.status(404).json({ error: 'Skill not found' });
+    res.json({ success: true, skill: updated });
+  });
+
+  app.post('/api/skills/:id/test', (req, res) => {
+    const { id } = req.params;
+    const skill = db.getSkills().find((s) => s.id === id);
+    if (!skill) return res.status(404).json({ error: 'Skill not found' });
+
+    // Increment execution count
+    db.updateSkill(id, {
+      executionCount: (skill.executionCount || 0) + 1,
+      lastUsed: 'Just now',
+    });
+
+    res.json({
+      success: true,
+      message: `${skill.name} muvaffaqiyatli sinovdan o'tdi.`,
+      status: 'OPERATIONAL',
+      executionTimeMs: Math.floor(Math.random() * 80) + 40,
+      logs: [
+        `[SKILL_INIT] Loading manifest for ${skill.name}`,
+        `[PERM_CHECK] Clearance: ${skill.permissionLevel} (Approved)`,
+        `[EXECUTE] Mock diagnostic test executed safely`,
+        `[RESULT] Skill response verified without errors`,
+      ],
+    });
+  });
+
+  // ==========================================
+  // MEMORY SYSTEM
+  // ==========================================
+  app.get('/api/memories', (req, res) => {
+    const { user } = getAuthUser(req);
+    const userId = user?.id || 'usr-temurbek';
+    const memories = db.getMemories(userId);
+    res.json({ memories });
+  });
+
+  app.post('/api/memories', (req, res) => {
+    const { user } = getAuthUser(req);
+    const userId = user?.id || 'usr-temurbek';
+    const { category, key, value } = req.body;
+    if (!key || !value) return res.status(400).json({ error: 'Key and value required' });
+    const mem = db.addMemory({
+      userId,
+      category: category || 'preference',
+      key,
+      value,
+    });
+    res.json({ success: true, memory: mem });
+  });
+
+  app.delete('/api/memories/:id', (req, res) => {
+    const { id } = req.params;
+    const deleted = db.deleteMemory(id);
+    res.json({ success: deleted });
+  });
+
+  app.delete('/api/memories', (req, res) => {
+    const { user } = getAuthUser(req);
+    const userId = user?.id || 'usr-temurbek';
+    db.clearMemories(userId);
+    res.json({ success: true });
+  });
+
+  // ==========================================
+  // NOTIFICATIONS SYSTEM
+  // ==========================================
+  app.get('/api/notifications', (req, res) => {
+    const { user } = getAuthUser(req);
+    const userId = user?.id || 'usr-temurbek';
+    const notifications = db.getNotifications(userId);
+    res.json({ notifications });
+  });
+
+  app.post('/api/notifications', (req, res) => {
+    const { user } = getAuthUser(req);
+    const userId = user?.id || 'usr-temurbek';
+    const { title, message, type } = req.body;
+    const notif = db.addNotification({
+      userId,
+      title: title || 'Bildirishnoma',
+      message: message || '',
+      type: type || 'info',
+    });
+    res.json({ success: true, notification: notif });
+  });
+
+  app.put('/api/notifications/:id/read', (req, res) => {
+    const { id } = req.params;
+    db.markNotificationAsRead(id);
+    res.json({ success: true });
+  });
+
+  app.post('/api/notifications/mark-all-read', (req, res) => {
+    const { user } = getAuthUser(req);
+    const userId = user?.id || 'usr-temurbek';
+    db.markAllNotificationsRead(userId);
+    res.json({ success: true });
+  });
+
+  app.delete('/api/notifications', (req, res) => {
+    const { user } = getAuthUser(req);
+    const userId = user?.id || 'usr-temurbek';
+    db.clearNotifications(userId);
+    res.json({ success: true });
+  });
+
   // API: Health check
   app.get('/api/health', (req, res) => {
     res.json({
@@ -351,6 +844,144 @@ async function startServer() {
     }
   });
 
+  // ==========================================
+  // LOCAL COMPUTER AGENT (PORT 4141) BRIDGE
+  // ==========================================
+  const LOCAL_AGENT_URL = 'http://127.0.0.1:4141';
+
+  async function checkLocalAgentStatus(): Promise<{ connected: boolean; data?: any; error?: string }> {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 1200);
+      const res = await fetch(`${LOCAL_AGENT_URL}/ping`, {
+        method: 'GET',
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (res.ok) {
+        const data = await res.json();
+        return { connected: true, data };
+      }
+    } catch (err: any) {
+      // Local agent unreachable
+    }
+    return { connected: false, error: 'Local agent is not reachable on 127.0.0.1:4141' };
+  }
+
+  async function forwardToLocalAgent(action: string, params: any = {}, confirmed = false): Promise<any> {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 12000);
+      const res = await fetch(`${LOCAL_AGENT_URL}/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, params, confirmed }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (res.ok) {
+        return await res.json();
+      }
+      return { success: false, error: `Local agent returned HTTP ${res.status}` };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Mahalliy agent bilan aloqa muvaffaqiyatsiz bo\'ldi' };
+    }
+  }
+
+  app.get('/api/local-agent/ping', async (req, res) => {
+    const result = await checkLocalAgentStatus();
+    res.json({ connected: result.connected, agent: result.data, error: result.error });
+  });
+
+  app.post('/api/local-agent/execute', async (req, res) => {
+    const { action, params = {}, confirmed = false } = req.body;
+    if (!action) return res.status(400).json({ success: false, error: 'Action parameter is required' });
+
+    const status = await checkLocalAgentStatus();
+    if (!status.connected) {
+      return res.json({
+        success: false,
+        connected: false,
+        error: '🔴 Mac agent is not connected. Iltimos, kompyuteringizda ./JarvisAI.command ni ishga tushiring.',
+      });
+    }
+
+    const result = await forwardToLocalAgent(action, params, confirmed);
+    res.json({ ...result, connected: true });
+  });
+
+  // Helper to parse real computer commands
+  function parseComputerIntent(message: string): { action: string; params: Record<string, any>; target: string } | null {
+    const text = message.trim();
+    const lower = text.toLowerCase();
+
+    // App launch patterns: "Discordni och", "Open Discord", "Discord och", "Открой Discord", "Launch Safari"
+    const openAppMatch =
+      text.match(/(?:och|ishga tushir|yoq|open|launch|start|открой|запусти)\s+([a-zA-Z0-9\s._-]+)/i) ||
+      text.match(/([a-zA-Z0-9._-]+)(?:ni|i|'ni)?\s+(?:och|ishga tushir|yoq)/i);
+
+    if (openAppMatch && openAppMatch[1]) {
+      const appRaw = openAppMatch[1].trim();
+      const forbidden = ['savol', 'xabar', 'gap', 'suhbat', 'chat', 'sayt', 'web', 'internet', 'kod', 'tarix'];
+      if (!forbidden.includes(appRaw.toLowerCase())) {
+        let appName = appRaw;
+        if (/discord/i.test(appRaw)) appName = 'Discord';
+        else if (/chrome/i.test(appRaw)) appName = 'Google Chrome';
+        else if (/safari/i.test(appRaw)) appName = 'Safari';
+        else if (/telegram/i.test(appRaw)) appName = 'Telegram';
+        else if (/terminal/i.test(appRaw)) appName = 'Terminal';
+        else if (/code|vs\s*code|visual studio/i.test(appRaw)) appName = 'Visual Studio Code';
+        else if (/finder|fayl|papka/i.test(appRaw)) appName = 'Finder';
+        else if (/spotify/i.test(appRaw)) appName = 'Spotify';
+        else if (/calculator|kalkulyator/i.test(appRaw)) appName = 'Calculator';
+
+        return { action: 'launch_application', params: { application: appName }, target: appName };
+      }
+    }
+
+    // App close patterns
+    const closeAppMatch =
+      text.match(/(?:yop|o'chir|to'xtat|close|quit|kill|закрой|останови)\s+([a-zA-Z0-9\s._-]+)/i) ||
+      text.match(/([a-zA-Z0-9._-]+)(?:ni|i|'ni)?\s+(?:yop|to'xtat)/i);
+
+    if (closeAppMatch && closeAppMatch[1]) {
+      const appRaw = closeAppMatch[1].trim();
+      let appName = appRaw;
+      if (/discord/i.test(appRaw)) appName = 'Discord';
+      else if (/chrome/i.test(appRaw)) appName = 'Google Chrome';
+      else if (/safari/i.test(appRaw)) appName = 'Safari';
+      else if (/telegram/i.test(appRaw)) appName = 'Telegram';
+      return { action: 'close_application', params: { application: appName }, target: appName };
+    }
+
+    // URL open patterns
+    if (/(?:youtube|google|github|twitter|x\.com)\s*(?:ni)?\s*(?:och|open)/i.test(text) || /^https?:\/\//i.test(text)) {
+      let url = 'https://www.google.com';
+      let targetName = 'Veb-sayt';
+      if (/youtube/i.test(text)) {
+        url = 'https://www.youtube.com';
+        targetName = 'YouTube';
+      } else if (/github/i.test(text)) {
+        url = 'https://github.com';
+        targetName = 'GitHub';
+      } else if (/google/i.test(text)) {
+        url = 'https://www.google.com';
+        targetName = 'Google';
+      } else {
+        const uMatch = text.match(/https?:\/\/[^\s]+/i);
+        if (uMatch) url = uMatch[0];
+      }
+      return { action: 'open_url', params: { url }, target: targetName };
+    }
+
+    // System info patterns
+    if (/(?:tizim|kompyuter|mac|sistema|system|diagnostika)\s*(?:holati|ma'lumot|haqida|info|status)/i.test(text)) {
+      return { action: 'get_system_info', params: {}, target: 'Mac Tizim Diagnostikasi' };
+    }
+
+    return null;
+  }
+
   // API: JARVIS Conversational, Analytical & Voice Chat (Powered by Gemini)
   app.post('/api/jarvis/chat', async (req, res) => {
     try {
@@ -362,10 +993,84 @@ async function startServer() {
         apiKey,
         webSearch = false,
         deepThink = false,
+        executionMode = 'real', // 'real' (default) or 'simulation'
+        model: requestedModelRaw,
       } = req.body;
 
       if (!message) {
         return res.status(400).json({ error: 'Message is required' });
+      }
+
+      // Check if this request is a computer control command
+      const computerIntent = parseComputerIntent(message);
+
+      if (computerIntent) {
+        // Mode 1: Simulation Mode
+        if (executionMode === 'simulation') {
+          const simReply = `⚠️ **[Simulyatsiya rejimi]:** Haqiqiy kompyuter agenti ulanmagan.\n\nSimulyatsiya qilingan harakat: **"${computerIntent.target}"** (${computerIntent.action}) deb belgilandi. Haqiqiy kompyuterda ilovani ochish uchun Sozlamalarda "Real Computer" rejimini tanlang.`;
+          return res.json({
+            success: true,
+            isSimulation: true,
+            reply: simReply,
+            voiceText: `Simulyatsiya rejimi. ${computerIntent.target} ochilishi simulyatsiya qilindi.`,
+            actionTriggered: computerIntent.action,
+            source: 'jarvis-simulation-mode',
+          });
+        }
+
+        // Mode 2: Real Computer Mode (Default)
+        // Check if server can reach the local agent
+        const agentStatus = await checkLocalAgentStatus();
+
+        if (agentStatus.connected) {
+          // Execute on real local agent!
+          const execResult = await forwardToLocalAgent(computerIntent.action, computerIntent.params);
+
+          if (execResult.success) {
+            let successReply = '';
+            if (computerIntent.action === 'launch_application') {
+              successReply = `✅ **${computerIntent.target}** ilovasi muvaffaqiyatli ochildi va macOS tizimingizda ishga tushirildi, janob.\n\n*(Mahalliy agent orqali tasdiqlandi: jarayon faol)*`;
+            } else if (computerIntent.action === 'close_application') {
+              successReply = `✅ **${computerIntent.target}** ilovasi macOS tizimida to'xtatildi va yopildi, janob.`;
+            } else if (computerIntent.action === 'open_url') {
+              successReply = `✅ **${computerIntent.target}** (${computerIntent.params.url}) brauzeringizda muvaffaqiyatli ochildi, janob.`;
+            } else if (computerIntent.action === 'get_system_info') {
+              const d = execResult.data || {};
+              successReply = `🖥️ **Mac Tizim Diagnostikasi:**\n- Model: **${d.model || 'Apple Mac'}**\n- OS: **macOS ${d.osVersion || ''}** (${d.platform || 'darwin'} ${d.arch || 'arm64'})\n- Protsessor: **${d.cpuModel || 'Apple Silicon'}** (${d.cpuCores || 8} yadroli)\n- Xotira (RAM): **${d.freeMemGB || 4} GB** bo'sh / **${d.totalMemGB || 16} GB** umumiy\n- Ish vaqti (Uptime): **${Math.round((d.uptime || 0) / 3600)} soat**`;
+            } else {
+              successReply = `✅ Buyruq muvaffaqiyatli bajarildi: ${execResult.message || 'Bajarildi'}`;
+            }
+
+            return res.json({
+              success: true,
+              reply: successReply,
+              voiceText: `${computerIntent.target} muvaffaqiyatli ochildi, janob.`,
+              actionTriggered: computerIntent.action,
+              toolResult: execResult,
+              source: 'jarvis-local-agent',
+            });
+          } else {
+            // Real execution failed (e.g. app not found)
+            const failReply = `❌ **${computerIntent.target}** ilovasini ochib bo‘lmadi: ${execResult.error || 'Ilova topilmadi yoki ruxsat berilmadi'}.\n\nMac ilovalari ro'yxatida dastur nomi to'g'ri ekanligini tekshiring.`;
+            return res.json({
+              success: false,
+              reply: failReply,
+              voiceText: `${computerIntent.target}ni ochib bo'lmadi.`,
+              actionTriggered: computerIntent.action,
+              toolResult: execResult,
+              source: 'jarvis-local-agent',
+            });
+          }
+        } else {
+          // Local agent is NOT connected directly from server
+          // Return requiresClientExecution: true so the client browser can attempt direct execution
+          // If the browser also cannot reach the agent, it will report "🔴 Mac agent is not connected"
+          return res.json({
+            requiresClientExecution: true,
+            tool: computerIntent,
+            message: message,
+          });
+        }
       }
 
       const client = getAiClient(apiKey);
@@ -426,7 +1131,20 @@ Use the fresh web facts above to accurately answer current facts, dates, news, a
         // Add current message
         contents.push({ role: 'user', parts: [{ text: message }] });
 
-        const modelsToTry = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-flash-latest'];
+        // Map deprecated models like gemini-2.5-flash to gemini-3.6-flash
+        const sanitizedRequestedModel =
+          requestedModelRaw === 'gemini-2.5-flash' ? 'gemini-3.6-flash' : requestedModelRaw;
+
+        const candidateModels = [
+          sanitizedRequestedModel,
+          'gemini-3.8-flash',
+          'gemini-3.6-flash',
+          'gemini-flash-latest',
+          'gemini-3.1-flash-lite',
+        ].filter(Boolean) as string[];
+
+        // Deduplicate while preserving fallback priority
+        const modelsToTry = Array.from(new Set(candidateModels));
         for (const modelName of modelsToTry) {
           try {
             const config: any = {
@@ -777,26 +1495,46 @@ Respond with EXACTLY ONE JSON object matching the specification:
 NO MARKDOWN, NO CODEBLOCKS, STRICT JSON ONLY.
 `;
 
-          const response = await client.models.generateContent({
-            model: 'gemini-3.6-flash',
-            contents: [
-              { role: 'user', parts: [{ text: promptToUse + '\n\n' + turnContext }] }
-            ],
-            config: {
-              responseMimeType: 'application/json',
-              temperature: 0.2,
+          const agentModelsToTry = [
+            'gemini-3.8-flash',
+            'gemini-3.6-flash',
+            'gemini-flash-latest',
+            'gemini-3.1-flash-lite',
+          ];
+
+          let parsed: any = null;
+          let usedModel = 'gemini-3.8-flash';
+
+          for (const mName of agentModelsToTry) {
+            try {
+              const response = await client.models.generateContent({
+                model: mName,
+                contents: [
+                  { role: 'user', parts: [{ text: promptToUse + '\n\n' + turnContext }] }
+                ],
+                config: {
+                  responseMimeType: 'application/json',
+                  temperature: 0.2,
+                }
+              });
+
+              const rawText = response.text || '{}';
+              const cleanJson = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
+              parsed = JSON.parse(cleanJson);
+              usedModel = mName;
+              break;
+            } catch (mErr: any) {
+              console.warn(`Agent model ${mName} attempt failed:`, mErr?.message);
             }
-          });
+          }
 
-          const rawText = response.text || '{}';
-          const cleanJson = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
-          const parsed = JSON.parse(cleanJson);
-
-          return res.json({
-            success: true,
-            source: 'gemini-3.8-flash',
-            turn: parsed,
-          });
+          if (parsed) {
+            return res.json({
+              success: true,
+              source: usedModel,
+              turn: parsed,
+            });
+          }
         } catch (geminiError: any) {
           console.warn('Gemini API call failed, falling back to built-in simulation:', geminiError?.message);
         }

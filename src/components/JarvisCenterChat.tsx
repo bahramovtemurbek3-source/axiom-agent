@@ -32,12 +32,16 @@ export interface ChatMessageItem {
   };
 }
 
+export type VoiceActivityState = 'idle' | 'listening' | 'processing' | 'speaking' | 'error';
+
 interface JarvisCenterChatProps {
   messages: ChatMessageItem[];
   onSendMessage: (text: string, actionType?: 'chat' | 'task' | 'computer') => void;
   isProcessing?: boolean;
   isListening?: boolean;
+  voiceState?: VoiceActivityState;
   onToggleVoice?: () => void;
+  onStopSpeech?: () => void;
   onSelectPrompt?: (promptText: string) => void;
   onPillTabClick?: (tab: 'chat' | 'task' | 'computer' | 'files' | 'more') => void;
   connectedDeviceName?: string;
@@ -49,7 +53,9 @@ export const JarvisCenterChat: React.FC<JarvisCenterChatProps> = ({
   onSendMessage,
   isProcessing = false,
   isListening = false,
+  voiceState = 'idle',
   onToggleVoice,
+  onStopSpeech,
   onSelectPrompt,
   onPillTabClick,
   connectedDeviceName = 'MacBook-M1',
@@ -126,10 +132,10 @@ export const JarvisCenterChat: React.FC<JarvisCenterChatProps> = ({
               JARVIS AI
             </h1>
             <p className="text-base text-zinc-200 font-medium font-sans">
-              Buyruq ber. Men bajaraman.
+              Murakkablikni menga qoldiring.
             </p>
             <p className="text-xs text-zinc-400 font-sans">
-              Gemini AI + Kompyutering bilan quvvatlangan.
+              Fikringizdan — harakatgacha.
             </p>
           </div>
 
@@ -323,18 +329,61 @@ export const JarvisCenterChat: React.FC<JarvisCenterChatProps> = ({
 
       {/* BOTTOM INPUT DOCK (Matching Screenshot 1:1) */}
       <div className="p-4 md:px-8 bg-[#060a14] border-t border-blue-950/60 shrink-0">
-        <div className="max-w-3xl mx-auto rounded-2xl bg-[#070d1e] border border-blue-900/50 p-2 shadow-[0_0_20px_rgba(6,182,212,0.1)] space-y-2">
-          {/* Main Input Field */}
-          <div className="px-2 pt-1">
-            <input
-              type="text"
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Task yozing yoki Jarvis bilan suhbatlashing..."
-              className="w-full bg-transparent text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none font-sans"
-            />
+        <div className="max-w-3xl mx-auto space-y-2">
+          {/* Active Voice State Badge */}
+          <div className="flex items-center justify-between px-2 text-xs">
+            <div className="flex items-center gap-2">
+              {voiceState === 'listening' ? (
+                <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-950/70 border border-emerald-500/50 text-emerald-300 font-semibold text-[11px] animate-pulse">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                  <span>🎤 Tinglamoqda... (Gapiring)</span>
+                </span>
+              ) : voiceState === 'processing' ? (
+                <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-950/70 border border-blue-500/50 text-cyan-300 font-semibold text-[11px] animate-pulse">
+                  <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+                  <span>🧠 Qayta ishlanmoqda... (Gemini + Local Agent)</span>
+                </span>
+              ) : voiceState === 'speaking' ? (
+                <span className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-sky-950/70 border border-sky-500/50 text-sky-300 font-semibold text-[11px]">
+                  <span className="w-2 h-2 rounded-full bg-sky-400 animate-pulse" />
+                  <span>🔊 Gapirmoqda...</span>
+                  {onStopSpeech && (
+                    <button
+                      onClick={onStopSpeech}
+                      className="ml-1 text-[10px] underline text-sky-200 hover:text-white cursor-pointer"
+                    >
+                      To'xtatish
+                    </button>
+                  )}
+                </span>
+              ) : voiceState === 'error' ? (
+                <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-950/70 border border-rose-500/50 text-rose-300 font-semibold text-[11px]">
+                  <span>❌ Ovoz tizimida xatolik</span>
+                </span>
+              ) : (
+                <span className="flex items-center gap-1.5 text-zinc-500 text-[11px] font-mono">
+                  <span>⏹️ Kutish holatida (Idle)</span>
+                </span>
+              )}
+            </div>
+
+            <span className="text-[11px] text-zinc-500 hidden sm:inline">
+              Enter — yuborish
+            </span>
           </div>
+
+          <div className="rounded-2xl bg-[#070d1e] border border-blue-900/50 p-2 shadow-[0_0_20px_rgba(6,182,212,0.1)] space-y-2">
+            {/* Main Input Field */}
+            <div className="px-2 pt-1">
+              <input
+                type="text"
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Task yozing yoki Jarvis bilan suhbatlashing..."
+                className="w-full bg-transparent text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none font-sans"
+              />
+            </div>
 
           {/* Action Tools Row & Send Button */}
           <div className="flex items-center justify-between pt-1">
@@ -414,5 +463,6 @@ export const JarvisCenterChat: React.FC<JarvisCenterChatProps> = ({
         </div>
       </div>
     </div>
-  );
+  </div>
+);
 };

@@ -1,15 +1,23 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { HostOS, ConnectedDevice } from './types';
+import { HostOS, ConnectedDevice, UserProfile } from './types';
 import { JarvisTopHeader } from './components/JarvisTopHeader';
 import { JarvisLeftSidebar, JarvisNavTab } from './components/JarvisLeftSidebar';
 import { JarvisRightSidebar, RecentTaskItem } from './components/JarvisRightSidebar';
 import { JarvisCenterChat, ChatMessageItem } from './components/JarvisCenterChat';
 import { JarvisRealComputerControl } from './components/JarvisRealComputerControl';
 import { JarvisTasksView, TaskItem } from './components/JarvisTasksView';
+import { JarvisSkillsView } from './components/JarvisSkillsView';
+import { JarvisHistoryView } from './components/JarvisHistoryView';
 import { JarvisFilesView } from './components/JarvisFilesView';
 import { JarvisAppsView } from './components/JarvisAppsView';
 import { JarvisSettingsView } from './components/JarvisSettingsView';
+import { JarvisAccountView } from './components/JarvisAccountView';
+import { JarvisAuthModal } from './components/JarvisAuthModal';
+import { JarvisNotificationsModal } from './components/JarvisNotificationsModal';
 import { JarvisProfileModal } from './components/JarvisProfileModal';
+import { JarvisAgentStatusModal } from './components/JarvisAgentStatusModal';
+import { localAgent, AgentStatus, LocalAgentDetails } from './utils/localAgent';
+import { VoiceActivityState } from './components/JarvisCenterChat';
 import { playJarvisSound, speakJarvis, stopJarvisSpeech } from './utils/jarvisVoice';
 
 export default function App() {
@@ -18,15 +26,38 @@ export default function App() {
   const [isDeviceConnected, setIsDeviceConnected] = useState<boolean>(true);
   const [connectedDeviceName, setConnectedDeviceName] = useState<string>('MacBook-M1');
 
-  // User details matching the screenshot
-  const [userName, setUserName] = useState<string>('Temurbek');
-  const [userHandle, setUserHandle] = useState<string>('@temurbek');
-  const [userEmail, setUserEmail] = useState<string>('temurbek@gmail.com');
-  const [isProfileModalOpen, setIsProfileModalOpen] = useState<boolean>(false);
+  // Real Local Agent State & Modal
+  const [isAgentModalOpen, setIsAgentModalOpen] = useState(false);
+  const [agentStatus, setAgentStatus] = useState<AgentStatus>(localAgent.getStatus());
+  const [agentDetails, setAgentDetails] = useState<LocalAgentDetails>(localAgent.getDetails());
+  const [voiceState, setVoiceState] = useState<VoiceActivityState>('idle');
 
-  // Live Metrics
-  const [cpuUsage, setCpuUsage] = useState<number>(12);
-  const [ramUsage, setRamUsage] = useState<number>(36);
+  // User Profile & Authentication
+  const [currentUser, setCurrentUser] = useState<UserProfile>({
+    id: 'usr_default',
+    username: 'temurbek',
+    name: 'Temurbek',
+    displayName: 'Temurbek',
+    handle: '@temurbek',
+    email: 'bahramovtemurbek3@gmail.com',
+    role: 'Operator',
+    avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
+    plan: 'Premium',
+    memberSince: '2025-06-01',
+    storageUsedGB: 14.5,
+    storageTotalGB: 100,
+  });
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(2);
+
+  // Active Conversation ID
+  const [activeConversationId, setActiveConversationId] = useState<string>('conv_main');
+
+  // Live System Metrics
+  const [cpuUsage, setCpuUsage] = useState<number>(14);
+  const [ramUsage, setRamUsage] = useState<number>(38);
   const [networkStatus, setNetworkStatus] = useState<'Stable' | 'Connecting' | 'Offline'>('Stable');
 
   // Voice Interaction State
@@ -34,7 +65,7 @@ export default function App() {
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const recognitionRef = useRef<any>(null);
 
-  // Recent Tasks matching the screenshot 1:1
+  // Recent Tasks
   const [recentTasks, setRecentTasks] = useState<RecentTaskItem[]>([
     {
       id: 'task-1',
@@ -73,7 +104,7 @@ export default function App() {
     },
   ]);
 
-  // Full Tasks state for Tasks view
+  // Tasks View State
   const [allTasks, setAllTasks] = useState<TaskItem[]>([
     {
       id: 't-1',
@@ -112,7 +143,7 @@ export default function App() {
     },
   ]);
 
-  // Messages flow matching screenshot 1:1
+  // Messages flow
   const [messages, setMessages] = useState<ChatMessageItem[]>([
     {
       id: 'msg-1',
@@ -159,7 +190,48 @@ export default function App() {
     },
   ]);
 
-  // Detect real platform on startup
+  // Check user session on app start
+  const checkAuth = async () => {
+    try {
+      const token = localStorage.getItem('jarvis_token');
+      if (!token) return;
+      const res = await fetch('/api/auth/me', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.user) {
+          setCurrentUser(data.user);
+        }
+      }
+    } catch (err) {
+      console.warn('Auth check error:', err);
+    }
+  };
+
+  // Fetch unread notifications count
+  const fetchUnreadCount = async () => {
+    try {
+      const token = localStorage.getItem('jarvis_token');
+      const res = await fetch('/api/notifications', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const data = await res.json();
+      if (data.notifications) {
+        const unread = data.notifications.filter((n: any) => !n.read).length;
+        setUnreadNotificationsCount(unread);
+      }
+    } catch (err) {
+      // ignore
+    }
+  };
+
+  useEffect(() => {
+    checkAuth();
+    fetchUnreadCount();
+  }, []);
+
+  // Detect Host OS
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const ua = navigator.userAgent;
@@ -176,16 +248,50 @@ export default function App() {
     }
   }, []);
 
-  // Subtle real-time metric jitter to look alive and responsive
+  // Real-time jitter for metrics
   useEffect(() => {
     const interval = setInterval(() => {
-      setCpuUsage(Math.floor(10 + Math.random() * 6));
-      setRamUsage(Math.floor(35 + Math.random() * 3));
-    }, 4000);
+      setCpuUsage(Math.floor(10 + Math.random() * 8));
+      setRamUsage(Math.floor(35 + Math.random() * 4));
+    }, 4500);
     return () => clearInterval(interval);
   }, []);
 
-  // Web Speech Recognition for voice input
+  // Subscribe to local agent state
+  useEffect(() => {
+    const unsub = localAgent.subscribe((st, dt) => {
+      setAgentStatus(st);
+      setAgentDetails(dt);
+    });
+    return unsub;
+  }, []);
+
+  // Voice speaker with strict settings check and voiceState management
+  const speakWithState = (text: string) => {
+    try {
+      const raw = localStorage.getItem('jarvis_settings');
+      if (raw) {
+        const s = JSON.parse(raw);
+        if (s?.voice?.voiceEnabled === false || s?.voice?.voiceOutputEnabled === false) {
+          setVoiceState('idle');
+          return; // Voice OFF must strictly work!
+        }
+      }
+    } catch (_) {}
+
+    setVoiceState('speaking');
+    speakJarvis(text, {
+      onStart: () => setVoiceState('speaking'),
+      onEnd: () => setVoiceState('idle'),
+    });
+  };
+
+  const handleStopSpeech = () => {
+    stopJarvisSpeech();
+    setVoiceState('idle');
+  };
+
+  // Web Speech Recognition
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const SpeechRecognition =
@@ -199,6 +305,7 @@ export default function App() {
         recognition.onresult = (event: any) => {
           const transcript = event.results[0][0].transcript;
           setIsListening(false);
+          setVoiceState('idle');
           if (transcript) {
             handleSendMessage(transcript);
           }
@@ -206,10 +313,12 @@ export default function App() {
 
         recognition.onerror = () => {
           setIsListening(false);
+          setVoiceState('error');
+          setTimeout(() => setVoiceState('idle'), 2500);
         };
-
         recognition.onend = () => {
           setIsListening(false);
+          setVoiceState((prev) => (prev === 'listening' ? 'idle' : prev));
         };
 
         recognitionRef.current = recognition;
@@ -218,22 +327,87 @@ export default function App() {
   }, [hostOS]);
 
   const toggleVoice = () => {
+    try {
+      const raw = localStorage.getItem('jarvis_settings');
+      if (raw) {
+        const s = JSON.parse(raw);
+        if (s?.voice?.voiceEnabled === false || s?.voice?.voiceInputEnabled === false) {
+          alert("Ovoz kiritish (mikrofon) sozlamalarda o'chirilgan. Sozlamalar bo'limidan yoqing.");
+          return;
+        }
+      }
+    } catch (_) {}
+
     if (isListening) {
       recognitionRef.current?.stop();
       setIsListening(false);
+      setVoiceState('idle');
       stopJarvisSpeech();
     } else {
       playJarvisSound('wake');
       try {
         recognitionRef.current?.start();
         setIsListening(true);
+        setVoiceState('listening');
       } catch (err) {
-        // speech rec busy or unsupported
+        setVoiceState('error');
+        setTimeout(() => setVoiceState('idle'), 2000);
       }
     }
   };
 
-  // Main Action & Message Handler
+  // Switch Active Conversation & Load Messages
+  const handleSelectConversation = async (convId: string) => {
+    setActiveConversationId(convId);
+    setActiveTab('chat');
+    try {
+      const token = localStorage.getItem('jarvis_token');
+      const res = await fetch(`/api/conversations/${convId}/messages`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const data = await res.json();
+      if (data.messages && data.messages.length > 0) {
+        setMessages(
+          data.messages.map((m: any) => ({
+            id: m.id,
+            sender: m.sender,
+            text: m.text,
+            time: new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            completedBadge: m.sender === 'jarvis',
+          }))
+        );
+      } else {
+        // Empty conversation
+        setMessages([
+          {
+            id: `jarvis-${Date.now()}`,
+            sender: 'jarvis',
+            text: "Salom janob. Yangi sessiya boshlandi. Qanday yordam bera olaman?",
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            completedBadge: true,
+          },
+        ]);
+      }
+    } catch (err) {
+      console.warn('Load messages error:', err);
+    }
+  };
+
+  // Start a fresh new chat
+  const handleNewChat = () => {
+    setActiveTab('chat');
+    setMessages([
+      {
+        id: `jarvis-${Date.now()}`,
+        sender: 'jarvis',
+        text: `Salom ${currentUser.name}! Yangi suhbat sessiyasi boshlandi. Men barcha ko'nikmalarim (brauzer, fayllar, terminal, Minecraft) bilan xizmatingizdaman.`,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        completedBadge: true,
+      },
+    ]);
+  };
+
+  // Handle Send Message & Neural Gemini Backend Execution
   const handleSendMessage = async (rawText: string) => {
     const text = rawText.trim();
     if (!text) return;
@@ -249,154 +423,32 @@ export default function App() {
     };
     setMessages((prev) => [...prev, userMsg]);
     setIsProcessing(true);
+    setVoiceState('processing');
 
-    const lower = text.toLowerCase();
-
-    // 1. YouTube command handling
-    if (lower.includes('youtube') || lower.includes('video')) {
-      playJarvisSound('acknowledge');
-      speakJarvis("YouTube sayti kompyuteringizda ochilmoqda, janob.");
-      window.open('https://www.youtube.com', '_blank');
-
-      setTimeout(() => {
-        const jarvisMsg: ChatMessageItem = {
-          id: `jarvis-${Date.now()}`,
-          sender: 'jarvis',
-          text: 'YouTube ochilmoqda...',
-          substeps: [
-            'Brauzerni ishga tushirdim',
-            "YouTube saytiga o'tmoqda...",
-          ],
-          completedBadge: true,
-          time: currentTime,
-          embeddedCard: {
-            type: 'youtube',
-            title: 'YouTube',
-            url: 'https://www.youtube.com',
-          },
-        };
-        setMessages((prev) => [...prev, jarvisMsg]);
-        setIsProcessing(false);
-
-        // Add to recent tasks
-        setRecentTasks((prev) => [
-          {
-            id: `task-${Date.now()}`,
-            title: 'YouTube ochish',
-            iconType: 'youtube',
-            status: 'Completed',
-            time: currentTime,
-          },
-          ...prev.slice(0, 4),
-        ]);
-      }, 700);
-      return;
-    }
-
-    // 2. Open Files command handling
-    if (lower.includes('fayl') || lower.includes('papka') || lower.includes('explorer') || lower.includes('finder')) {
-      playJarvisSound('acknowledge');
-      speakJarvis("Kompyuteringizdagi fayllar ochilmoqda.");
-
-      // Open real local file picker if supported
-      if (typeof window !== 'undefined' && (window as any).showOpenFilePicker) {
-        (window as any).showOpenFilePicker().catch(() => {});
-      }
-
-      setTimeout(() => {
-        const jarvisMsg: ChatMessageItem = {
-          id: `jarvis-${Date.now()}`,
-          sender: 'jarvis',
-          text: 'Fayllar papkasi ochilmoqda...',
-          substeps: [
-            `${hostOS === 'macOS' ? 'macOS Finder' : 'Windows Explorer'} ishga tushirildi`,
-          ],
-          completedBadge: true,
-          time: currentTime,
-          embeddedCard: {
-            type: 'folder',
-            title: 'Fayllar Papkasi',
-            subtitle: hostOS === 'macOS' ? '/Users/temurbek' : 'C:\\Users\\Temurbek',
-          },
-        };
-        setMessages((prev) => [...prev, jarvisMsg]);
-        setIsProcessing(false);
-
-        setRecentTasks((prev) => [
-          {
-            id: `task-${Date.now()}`,
-            title: 'Fayllarni ochish',
-            iconType: 'files',
-            status: 'Completed',
-            time: currentTime,
-          },
-          ...prev.slice(0, 4),
-        ]);
-      }, 700);
-      return;
-    }
-
-    // 3. Google Search command
-    if (lower.includes('google') || lower.includes('qidir')) {
-      playJarvisSound('acknowledge');
-      speakJarvis("Google qidiruv tizimi ochildi.");
-      window.open('https://www.google.com', '_blank');
-
-      setTimeout(() => {
-        const jarvisMsg: ChatMessageItem = {
-          id: `jarvis-${Date.now()}`,
-          sender: 'jarvis',
-          text: "Google qidiruv xizmati ochildi...",
-          substeps: [
-            'Global tarmoqqa ulandi',
-            'Qidiruv natijalari tayyorlandi',
-          ],
-          completedBadge: true,
-          time: currentTime,
-        };
-        setMessages((prev) => [...prev, jarvisMsg]);
-        setIsProcessing(false);
-
-        setRecentTasks((prev) => [
-          {
-            id: `task-${Date.now()}`,
-            title: "Google'da qidirish",
-            iconType: 'search',
-            status: 'Completed',
-            time: currentTime,
-          },
-          ...prev.slice(0, 4),
-        ]);
-      }, 700);
-      return;
-    }
-
-    // 4. System diagnostics
-    if (lower.includes('tizim') || lower.includes('protsessor') || lower.includes('xotira') || lower.includes('ma\'lumot')) {
-      playJarvisSound('acknowledge');
-      speakJarvis(`Kompyuteringiz holati barqaror. ${connectedDeviceName} online rejimda ishlamoqda.`);
-
-      setTimeout(() => {
-        const jarvisMsg: ChatMessageItem = {
-          id: `jarvis-${Date.now()}`,
-          sender: 'jarvis',
-          text: `Tizim diagnostikasi yakunlandi:\n• Qurilma: ${connectedDeviceName} (${hostOS})\n• CPU yuklanishi: ${cpuUsage}%\n• RAM: ${ramUsage}%\n• Tarmoq holati: Barqaror (Stable)\n• Root ruxsati: Level 10 Faol`,
-          completedBadge: true,
-          time: currentTime,
-        };
-        setMessages((prev) => [...prev, jarvisMsg]);
-        setIsProcessing(false);
-      }, 600);
-      return;
-    }
-
-    // 5. Default: Intelligent Gemini Flash call via /api/jarvis/chat
+    // Retrieve active execution mode from localStorage settings
+    let executionMode = 'real';
     try {
+      const saved = localStorage.getItem('jarvis_settings');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed?.developer?.executionMode) {
+          executionMode = parsed.developer.executionMode;
+        }
+      }
+    } catch (_) {}
+
+    try {
+      const token = localStorage.getItem('jarvis_token');
       const res = await fetch('/api/jarvis/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           message: text,
+          conversationId: activeConversationId,
+          executionMode, // 'real' (default) or 'simulation'
           history: messages.slice(-6).map((m) => ({
             sender: m.sender,
             text: m.text,
@@ -404,34 +456,149 @@ export default function App() {
         }),
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        const reply = data.reply || "Buyrug'ingiz muvaffaqiyatli bajarildi, janob.";
-        const jarvisMsg: ChatMessageItem = {
-          id: `jarvis-${Date.now()}`,
-          sender: 'jarvis',
-          text: reply,
-          completedBadge: true,
-          time: currentTime,
-        };
-        setMessages((prev) => [...prev, jarvisMsg]);
-        playJarvisSound('acknowledge');
-        speakJarvis(data.voiceText || reply.slice(0, 200));
-      } else {
-        throw new Error('API server unavailable');
+      if (!res.ok) {
+        throw new Error('API server request failed');
       }
-    } catch (err) {
-      // Offline / fallback response
-      const fallbackMsg: ChatMessageItem = {
+
+      const data = await res.json();
+
+      // CASE 1: Requires Client Execution via Local Agent (Port 4141 on user's Mac)
+      if (data.requiresClientExecution && data.tool) {
+        const tool = data.tool;
+
+        // Mode A: Simulation Mode
+        if (executionMode === 'simulation') {
+          const simReply = `⚠️ **[Simulyatsiya rejimi]:** Haqiqiy kompyuterda hech narsa ochilmadi.\n\nSimulyatsiya qilingan harakat: **"${tool.target}"** (${tool.action}).\n\nHaqiqiy kompyuterda ilovani ochish uchun Sozlamalarda "Real Computer" rejimini tanlang.`;
+          const jarvisMsg: ChatMessageItem = {
+            id: `jarvis-${Date.now()}`,
+            sender: 'jarvis',
+            text: simReply,
+            completedBadge: true,
+            time: currentTime,
+          };
+          setMessages((prev) => [...prev, jarvisMsg]);
+          playJarvisSound('acknowledge');
+          speakWithState(`Simulyatsiya rejimi. ${tool.target} ochilishi simulyatsiya qilindi.`);
+          setIsProcessing(false);
+          return;
+        }
+
+        // Mode B: Real Computer Execution Mode (Default)
+        // Execute tool directly on local agent
+        const result = await localAgent.executeAction(tool.action, tool.params);
+
+        if (!result.connected) {
+          // Agent disconnected: NEVER fake success!
+          const errorMsg: ChatMessageItem = {
+            id: `jarvis-${Date.now()}`,
+            sender: 'jarvis',
+            text: `🔴 **Mac agent is not connected.**\n\nKompyuteringizda terminalni ochib, quyidagi buyruq orqali agentni ishga tushiring:\n\`\`\`bash\n./JarvisAI.command\n# yoki\n./JarvisAI.sh\n\`\`\`\nMahalliy agent 127.0.0.1:4141 da tinglaydi.`,
+            completedBadge: false,
+            time: currentTime,
+          };
+          setMessages((prev) => [...prev, errorMsg]);
+          playJarvisSound('alert');
+          speakWithState("Mac agenti ulanmagan. Iltimos, terminalda agentni ishga tushiring.");
+        } else if (result.success) {
+          // Real success verified on Mac
+          let successText = `✅ **${tool.target}** ilovasi muvaffaqiyatli ochildi va macOS tizimingizda ishga tushirildi, janob.`;
+          if (tool.action === 'close_application') {
+            successText = `✅ **${tool.target}** ilovasi macOS tizimida to'xtatildi va yopildi, janob.`;
+          } else if (tool.action === 'open_url') {
+            successText = `✅ **${tool.target}** (${tool.params?.url}) brauzeringizda muvaffaqiyatli ochildi, janob.`;
+          } else if (tool.action === 'get_system_info' && result.data) {
+            const d = result.data;
+            successText = `🖥️ **Mac Tizim Diagnostikasi:**\n- Model: **${d.model || 'Apple Mac'}**\n- OS: **macOS ${d.osVersion || ''}** (${d.platform || 'darwin'} ${d.arch || 'arm64'})\n- Protsessor: **${d.cpuModel || 'Apple Silicon'}** (${d.cpuCores || 8} yadroli)\n- Xotira (RAM): **${d.freeMemGB || 4} GB** bo'sh / **${d.totalMemGB || 16} GB** umumiy\n- Ish vaqti (Uptime): **${Math.round((d.uptime || 0) / 3600)} soat**`;
+          }
+
+          const jarvisMsg: ChatMessageItem = {
+            id: `jarvis-${Date.now()}`,
+            sender: 'jarvis',
+            text: successText,
+            completedBadge: true,
+            time: currentTime,
+            substeps: [
+              `Local Agent :4141 orqali macOS tizimiga yuborildi`,
+              `Jarayon tasdiqlandi (Holati: Faol)`,
+            ],
+          };
+          setMessages((prev) => [...prev, jarvisMsg]);
+          playJarvisSound('acknowledge');
+          speakWithState(`${tool.target} muvaffaqiyatli ochildi, janob.`);
+
+          setRecentTasks((prev) => [
+            {
+              id: `task-${Date.now()}`,
+              title: `${tool.target} ochish`,
+              iconType: 'system',
+              status: 'Completed',
+              time: currentTime,
+            },
+            ...prev.slice(0, 4),
+          ]);
+        } else {
+          // Real failure (e.g. app does not exist on Mac)
+          const failMsg: ChatMessageItem = {
+            id: `jarvis-${Date.now()}`,
+            sender: 'jarvis',
+            text: `❌ **${tool.target}** ilovasini ochib bo‘lmadi: ${result.error || 'Ilova topilmadi yoki macOS ruxsat bermadi'}.\n\nMac ilovalari ro'yxatida dastur mavjudligini tekshiring.`,
+            completedBadge: false,
+            time: currentTime,
+          };
+          setMessages((prev) => [...prev, failMsg]);
+          playJarvisSound('alert');
+          speakWithState(`❌ ${tool.target} ochib bo'lmadi.`);
+        }
+
+        setIsProcessing(false);
+        return;
+      }
+
+      // CASE 2: Server-side processed response (Gemini analytical chat or server-executed tool)
+      const reply = data.reply || "Buyrug'ingiz qabul qilindi, janob.";
+      const isOk = data.success !== false;
+      const jarvisMsg: ChatMessageItem = {
         id: `jarvis-${Date.now()}`,
         sender: 'jarvis',
-        text: `Buyruq qabul qilindi va ${connectedDeviceName} tizimida bajarildi, janob.`,
-        completedBadge: true,
+        text: reply,
+        completedBadge: isOk,
         time: currentTime,
       };
-      setMessages((prev) => [...prev, fallbackMsg]);
-      playJarvisSound('acknowledge');
-      speakJarvis("Buyrug'ingiz bajarildi, janob.");
+      setMessages((prev) => [...prev, jarvisMsg]);
+
+      if (isOk) {
+        playJarvisSound('acknowledge');
+        speakWithState(data.voiceText || reply.slice(0, 220));
+      } else {
+        playJarvisSound('alert');
+        speakWithState(data.voiceText || "Xatolik yuz berdi.");
+      }
+
+      // Add to recent tasks if it felt like an actionable task
+      if (text.length > 5 && !text.endsWith('?')) {
+        setRecentTasks((prev) => [
+          {
+            id: `task-${Date.now()}`,
+            title: text.slice(0, 30),
+            iconType: 'system',
+            status: isOk ? 'Completed' : 'Failed',
+            time: currentTime,
+          },
+          ...prev.slice(0, 4),
+        ]);
+      }
+    } catch (err) {
+      // NEVER FAKE SUCCESS ON ERROR!
+      const errorMsg: ChatMessageItem = {
+        id: `jarvis-${Date.now()}`,
+        sender: 'jarvis',
+        text: `❌ **Xatolik:** So'rovingizni bajarib bo'lmadi. Server yoki tarmoq bilan aloqa uzilgan bo'lishi mumkin.`,
+        completedBadge: false,
+        time: currentTime,
+      };
+      setMessages((prev) => [...prev, errorMsg]);
+      playJarvisSound('alert');
+      speakWithState("Xatolik yuz berdi. Server bilan aloqa yo'q.");
     } finally {
       setIsProcessing(false);
     }
@@ -448,7 +615,7 @@ export default function App() {
       setRecentTasks((prev) => [
         {
           id: `task-${Date.now()}`,
-          title: 'YouTube ochish',
+          title: 'Brauzerni ishga tushirish',
           iconType: 'youtube',
           status: 'Completed',
           time,
@@ -457,35 +624,56 @@ export default function App() {
       ]);
     } else if (action === 'files') {
       playJarvisSound('acknowledge');
-      speakJarvis("Fayllar ochildi.");
-      if (typeof window !== 'undefined' && (window as any).showOpenFilePicker) {
-        (window as any).showOpenFilePicker().catch(() => {});
-      }
+      speakJarvis("Fayllar ko'rinishi faollashdi.");
       setActiveTab('files');
-    } else if (action === 'shutdown') {
-      playJarvisSound('shutdown');
-      speakJarvis("Tizimni o'chirish rejimi faollashtirildi.");
-      alert("J.A.R.V.I.S.: Kompyuterni o'chirish protokolining xavfsizlik tekshiruvi tasdiqlandi.");
     } else if (action === 'restart') {
-      playJarvisSound('wake');
-      speakJarvis("J.A.R.V.I.S. tizimi qayta yuklanmoqda.");
-      setCpuUsage(12);
-      setRamUsage(36);
+      playJarvisSound('blip');
+      speakJarvis("J.A.R.V.I.S. tizimi qayta yuklanmoqda...");
+      setTimeout(() => window.location.reload(), 1200);
+    } else if (action === 'shutdown') {
+      playJarvisSound('blip');
+      speakJarvis("Tizim uyqu rejimiga o'tkazilmoqda.");
+      setIsDeviceConnected(false);
     }
   };
 
+  const handleLogout = () => {
+    localStorage.removeItem('jarvis_token');
+    setCurrentUser({
+      id: 'usr_guest',
+      username: 'mehmon',
+      name: 'Mehmon',
+      displayName: 'Mehmon',
+      handle: '@mehmon',
+      email: 'mehmon@jarvis.ai',
+      role: 'Guest',
+      avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
+      plan: 'Basic',
+      memberSince: 'Bugun',
+      storageUsedGB: 0.1,
+      storageTotalGB: 5,
+    });
+    playJarvisSound('blip');
+  };
+
   return (
-    <div className="w-screen h-screen bg-[#050813] text-zinc-100 flex flex-col overflow-hidden font-sans select-none">
-      {/* 1. Top Header (Matching Screenshot 1:1) */}
+    <div className="flex flex-col h-screen w-screen bg-[#040711] text-zinc-100 font-sans overflow-hidden antialiased">
+      {/* 1. TOP HEADER */}
       <JarvisTopHeader
-        userName={userName}
+        userName={currentUser.name}
+        avatarUrl={currentUser.avatar}
+        unreadNotificationsCount={unreadNotificationsCount}
         isApiConnected={true}
-        onOpenProfile={() => setIsProfileModalOpen(true)}
+        localAgentStatus={agentStatus}
+        localAgentLatency={agentDetails.latency}
+        onOpenNotifications={() => setIsNotificationsOpen(true)}
+        onOpenProfile={() => setActiveTab('account')}
+        onOpenAgentModal={() => setIsAgentModalOpen(true)}
       />
 
-      {/* 2. Three-Column Main Layout */}
+      {/* 2. THREE COLUMN LAYOUT */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left Sidebar */}
+        {/* Left Navigation Sidebar */}
         <JarvisLeftSidebar
           activeTab={activeTab}
           onSelectTab={(tab) => {
@@ -506,7 +694,9 @@ export default function App() {
               onSendMessage={handleSendMessage}
               isProcessing={isProcessing}
               isListening={isListening}
+              voiceState={voiceState}
               onToggleVoice={toggleVoice}
+              onStopSpeech={handleStopSpeech}
               onSelectPrompt={(p) => handleSendMessage(p)}
               onPillTabClick={(pill) => {
                 if (pill === 'computer') setActiveTab('computer');
@@ -516,6 +706,14 @@ export default function App() {
               }}
               connectedDeviceName={connectedDeviceName}
               hostOS={hostOS}
+            />
+          )}
+
+          {activeTab === 'history' && (
+            <JarvisHistoryView
+              activeConversationId={activeConversationId}
+              onSelectConversation={handleSelectConversation}
+              onNewChat={handleNewChat}
             />
           )}
 
@@ -541,6 +739,8 @@ export default function App() {
               }}
             />
           )}
+
+          {activeTab === 'skills' && <JarvisSkillsView />}
 
           {activeTab === 'computer' && (
             <JarvisRealComputerControl
@@ -577,23 +777,12 @@ export default function App() {
           )}
 
           {activeTab === 'account' && (
-            <div className="flex-1 p-8 flex flex-col items-center justify-center text-center space-y-4">
-              <div className="w-20 h-20 rounded-full border-2 border-cyan-400 p-1 bg-zinc-900 shadow-[0_0_25px_rgba(6,182,212,0.4)]">
-                <img
-                  src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=160&auto=format&fit=crop&q=80"
-                  alt="Avatar"
-                  className="w-full h-full object-cover rounded-full"
-                />
-              </div>
-              <h2 className="text-2xl font-bold text-white">{userName}</h2>
-              <p className="text-cyan-400 font-mono text-sm">{userHandle}</p>
-              <button
-                onClick={() => setIsProfileModalOpen(true)}
-                className="px-5 py-2.5 rounded-xl bg-[#0055ff] hover:bg-[#0044dd] text-white font-semibold text-xs transition-all cursor-pointer shadow-md"
-              >
-                Profilni Tahrirlash
-              </button>
-            </div>
+            <JarvisAccountView
+              currentUser={currentUser}
+              onUpdateUser={(updated) => setCurrentUser(updated)}
+              onLogout={handleLogout}
+              onOpenAuthModal={() => setIsAuthModalOpen(true)}
+            />
           )}
 
           {activeTab === 'settings' && <JarvisSettingsView />}
@@ -601,17 +790,17 @@ export default function App() {
 
         {/* Right Sidebar */}
         <JarvisRightSidebar
-          userName={userName}
-          userHandle={userHandle}
-          userEmail={userEmail}
-          memberSince="2025-06-01"
-          planName="Premium"
-          storageUsedGB={12}
-          storageTotalGB={100}
+          userName={currentUser.name}
+          userHandle={currentUser.handle}
+          userEmail={currentUser.email}
+          memberSince={currentUser.memberSince || '2025-06-01'}
+          planName={currentUser.plan || 'Premium'}
+          storageUsedGB={currentUser.storageUsedGB || 14.5}
+          storageTotalGB={currentUser.storageTotalGB || 100}
           recentTasks={recentTasks}
           onViewAllTasks={() => setActiveTab('tasks')}
           onQuickAction={handleQuickAction}
-          onEditProfile={() => setIsProfileModalOpen(true)}
+          onEditProfile={() => setActiveTab('account')}
           onUpgrade={() => {
             playJarvisSound('wake');
             alert("Siz allaqachon Premium cheksiz tarifdasiz!");
@@ -623,17 +812,47 @@ export default function App() {
         />
       </div>
 
-      {/* Edit Profile Modal */}
+      {/* Auth Modal (Login & Registration) */}
+      <JarvisAuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        currentUser={currentUser}
+        onLogout={handleLogout}
+        onAuthSuccess={(user, token) => {
+          if (token) localStorage.setItem('jarvis_token', token);
+          setCurrentUser(user);
+          setIsAuthModalOpen(false);
+          speakJarvis(`Xush kelibsiz, ${user.name || user.displayName}. Tizim tayyor.`);
+        }}
+      />
+
+      {/* Notifications Modal */}
+      <JarvisNotificationsModal
+        isOpen={isNotificationsOpen}
+        onClose={() => setIsNotificationsOpen(false)}
+        onUnreadCountChange={(cnt) => setUnreadNotificationsCount(cnt)}
+      />
+
+      {/* Profile Edit Modal fallback */}
       <JarvisProfileModal
         isOpen={isProfileModalOpen}
         onClose={() => setIsProfileModalOpen(false)}
-        userName={userName}
-        userEmail={userEmail}
+        userName={currentUser.name}
+        userEmail={currentUser.email}
         onSave={(newName, newEmail) => {
-          setUserName(newName);
-          setUserEmail(newEmail);
-          setUserHandle(`@${newName.toLowerCase().replace(/\s+/g, '')}`);
+          setCurrentUser((prev) => ({
+            ...prev,
+            name: newName,
+            email: newEmail,
+            handle: `@${newName.toLowerCase().replace(/\s+/g, '')}`,
+          }));
         }}
+      />
+
+      {/* Real Computer Local Agent Status Modal */}
+      <JarvisAgentStatusModal
+        isOpen={isAgentModalOpen}
+        onClose={() => setIsAgentModalOpen(false)}
       />
     </div>
   );

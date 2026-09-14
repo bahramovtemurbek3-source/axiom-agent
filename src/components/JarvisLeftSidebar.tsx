@@ -1,7 +1,9 @@
 import React from 'react';
 import {
   MessageSquare,
+  History,
   CheckSquare,
+  Boxes,
   Laptop,
   Folder,
   LayoutGrid,
@@ -15,7 +17,9 @@ import {
 
 export type JarvisNavTab =
   | 'chat'
+  | 'history'
   | 'tasks'
+  | 'skills'
   | 'computer'
   | 'files'
   | 'apps'
@@ -41,7 +45,9 @@ export const JarvisLeftSidebar: React.FC<JarvisLeftSidebarProps> = ({
 }) => {
   const navItems = [
     { id: 'chat' as JarvisNavTab, label: 'Chat', icon: MessageSquare },
+    { id: 'history' as JarvisNavTab, label: 'History', icon: History },
     { id: 'tasks' as JarvisNavTab, label: 'Tasks', icon: CheckSquare },
+    { id: 'skills' as JarvisNavTab, label: 'Skills', icon: Boxes },
     { id: 'computer' as JarvisNavTab, label: 'Computer Control', icon: Laptop },
     { id: 'files' as JarvisNavTab, label: 'Files', icon: Folder },
     { id: 'apps' as JarvisNavTab, label: 'Apps', icon: LayoutGrid },
